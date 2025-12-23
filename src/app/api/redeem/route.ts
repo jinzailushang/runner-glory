@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerComponentClient } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,26 +12,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // TODO: 检查Supabase数据库（暂时跳过以通过构建）
-    console.log("验证兑换码:", code);
+    // 1. 验证兑换码
+    const { data: codeData, error: codeError } = await supabaseAdmin
+      .from('codes')
+      .select('*')
+      .eq('code', code.toUpperCase())
+      .eq('status', 'active')
+      .single();
 
-    // 测试兑换码验证（当数据库不可用时使用）
-    const validTestCodes = ["TEST123", "DEMO456", "SAMPLE789", "RUNNER001", "MARATHON001", "FINISH001", "GLORY001", "CHAMPION001", "VICTORY001", "HERO001"];
+    if (codeError || !codeData) {
+      // 检查是否是预设的测试码（用于演示环境）
+      const validTestCodes = ["TEST123", "DEMO456", "SAMPLE789", "RUNNER001"];
+      if (!validTestCodes.includes(code.toUpperCase())) {
+        return NextResponse.json(
+          { error: "兑换码无效或已使用" },
+          { status: 400 }
+        );
+      }
+    }
 
-    if (!validTestCodes.includes(code.toUpperCase())) {
+    // 2. 获取对应的生成结果
+    const { data: resultData, error: resultError } = await supabaseAdmin
+      .from('results')
+      .select('hd_image_url')
+      .eq('id', resultId)
+      .single();
+
+    if (resultError || !resultData) {
       return NextResponse.json(
-        { error: "兑换码无效或已使用" },
-        { status: 400 }
+        { error: "未找到对应的生成结果" },
+        { status: 404 }
       );
     }
 
-    // TODO: 根据resultId获取高清图片URL
-    // 暂时返回模拟的高清图片URL
-    const hdImageUrl = `https://picsum.photos/1024/1024?random=${resultId}_hd`;
+    // 3. 标记兑换码已使用（如果是数据库中的真实码）
+    if (codeData) {
+      await supabaseAdmin
+        .from('codes')
+        .update({ 
+          status: 'used', 
+          used_at: new Date().toISOString(),
+          result_id: resultId 
+        })
+        .eq('id', codeData.id);
+    }
 
     return NextResponse.json({
       success: true,
-      hdImageUrl,
+      hdImageUrl: resultData.hd_image_url,
       message: "兑换成功"
     });
 

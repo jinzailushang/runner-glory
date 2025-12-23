@@ -1,4 +1,7 @@
 import Replicate from 'replicate';
+import { supabaseAdmin } from './supabase';
+import { getTemplateById } from './templates';
+import sharp from 'sharp';
 
 // 初始化Replicate客户端
 const replicate = new Replicate({
@@ -72,10 +75,64 @@ export async function addWatermark(
   finishTime: string,
   logoUrl?: string
 ): Promise<string> {
-  // TODO: 使用Sharp或其他图像处理库添加水印
-  // 暂时返回原图
-  console.log(`添加水印: ${raceName} - ${finishTime}`);
-  return imageUrl;
+  try {
+    // 1. 获取图片内容和元数据
+    const response = await fetch(imageUrl);
+    const imageBuffer = Buffer.from(await response.arrayBuffer());
+    const imageMetadata = await sharp(imageBuffer).metadata();
+    const width = imageMetadata.width || 1024;
+    const height = imageMetadata.height || 1024;
+
+    // 2. 使用Sharp添加水印
+    // 根据图片宽度动态调整字体大小
+    const baseFontSize = Math.floor(width / 32);
+    const titleFontSize = Math.floor(width / 24);
+
+    // 创建一个包含文字的SVG，宽度与图片一致
+    const svgOverlay = `
+      <svg width="${width}" height="${Math.floor(height / 4)}">
+        <style>
+          .text { fill: white; font-family: sans-serif; font-weight: bold; }
+          .race { font-size: ${titleFontSize}px; }
+          .time { font-size: ${baseFontSize}px; fill: #ffd700; }
+          .bg { fill: rgba(0,0,0,0.4); }
+        </style>
+        <rect x="0" y="0" width="100%" height="100%" class="bg" />
+        <text x="40" y="${Math.floor(height / 10)}" class="text race">${raceName}</text>
+        <text x="40" y="${Math.floor(height / 6)}" class="text time">完赛时间: ${finishTime}</text>
+      </svg>
+    `;
+
+    const watermarkedImage = await sharp(imageBuffer)
+      .composite([
+        {
+          input: Buffer.from(svgOverlay),
+          gravity: 'south',
+        }
+      ])
+      .toBuffer();
+
+    // 3. 上传带水印的图片到 Supabase Storage
+    const fileName = `final_${Date.now()}.jpg`;
+    const { data, error } = await supabaseAdmin.storage
+      .from('results')
+      .upload(fileName, watermarkedImage, {
+        contentType: 'image/jpeg',
+      });
+
+    if (error) throw error;
+
+    // 4. 获取公开访问链接
+    const { data: { publicUrl } } = supabaseAdmin.storage
+      .from('results')
+      .getPublicUrl(fileName);
+
+    return publicUrl;
+  } catch (error) {
+    console.error('添加水印失败:', error);
+    // 如果水印失败，返回原图
+    return imageUrl;
+  }
 }
 
 // 完整的图片生成流程
@@ -91,7 +148,6 @@ export async function generateRunnerImage(
     if (typeof userFace === 'string') {
       userFaceUrl = userFace;
     } else {
-      // TODO: 上传到Supabase Storage或临时存储
       userFaceUrl = await uploadToTempStorage(userFace);
     }
 
@@ -118,16 +174,42 @@ export async function generateRunnerImage(
 
 // 辅助函数：上传到临时存储
 async function uploadToTempStorage(file: File): Promise<string> {
-  // TODO: 实现上传到Supabase Storage或Vercel Blob
-  // 暂时返回占位符URL
-  return `https://picsum.photos/512/512?random=${Date.now()}`;
+  try {
+    const fileName = `user_${Date.now()}_${file.name}`;
+    const { data, error } = await supabaseAdmin.storage
+      .from('temp-faces')
+      .upload(fileName, file, {
+        contentType: file.type,
+      });
+
+    if (error) throw error;
+
+    const { data: { publicUrl } } = supabaseAdmin.storage
+      .from('temp-faces')
+      .getPublicUrl(fileName);
+
+    return publicUrl;
+  } catch (error) {
+    console.error('上传临时头像失败:', error);
+    // 备选方案：由于我们在生产环境可能没有配置好 Storage，暂时返回占位图
+    return `https://picsum.photos/512/512?random=${Date.now()}`;
+  }
 }
 
 // 辅助函数：获取模版图片URL
 async function getTemplateImageUrl(templateId: number): Promise<string> {
-  // TODO: 从数据库或配置中获取模版图片URL
-  // 暂时返回占位符URL
-  return `https://picsum.photos/512/512?random=template_${templateId}`;
+  const template = getTemplateById(templateId);
+  if (!template) {
+    throw new Error(`未找到模版ID: ${templateId}`);
+  }
+
+  // 如果是本地路径，转换为完整 URL
+  if (template.imageUrl.startsWith('/')) {
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    return `${baseUrl}${template.imageUrl}`;
+  }
+
+  return template.imageUrl;
 }
 
 // 检查API密钥是否有效

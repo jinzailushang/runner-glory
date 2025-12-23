@@ -79,7 +79,37 @@ export function createRouteHandlerClient(cookieStore: any) {
 }
 
 // Admin client for server-side operations
-export const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+export const supabaseAdmin = (() => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || url === 'your_supabase_url' || !key || key === 'your_service_role_key') {
+    console.warn('Supabase Admin not configured, using mock client');
+    return {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            single: () => Promise.resolve({ data: null, error: null }),
+          }),
+        }),
+        insert: () => Promise.resolve({ error: null }),
+        update: () => ({
+          eq: () => Promise.resolve({ error: null }),
+        }),
+      }),
+      storage: {
+        from: () => ({
+          upload: () => Promise.resolve({ data: { path: 'mock' }, error: null }),
+          getPublicUrl: () => ({ data: { publicUrl: 'https://picsum.photos/512/512' } }),
+        }),
+      },
+    } as any;
+  }
+
+  return createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+})();

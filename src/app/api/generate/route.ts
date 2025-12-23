@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateRunnerImage } from "@/lib/replicate";
-import { createServerComponentClient } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,8 +49,24 @@ export async function POST(request: NextRequest) {
           finishTime
         );
 
-        // TODO: 保存结果到数据库（暂时跳过以通过构建）
-        console.log("生成结果:", resultId);
+        // 保存结果到数据库
+        const { error: dbError } = await supabaseAdmin
+          .from('results')
+          .insert({
+            id: resultId,
+            user_face_url: result.originalFaceUrl,
+            template_id: parseInt(templateId),
+            race_name: raceName,
+            finish_time: finishTime,
+            generated_image_url: result.swappedImageUrl,
+            hd_image_url: result.finalImageUrl,
+            status: 'completed',
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24小时后过期
+          });
+
+        if (dbError) {
+          console.error("保存生成结果到数据库失败:", dbError);
+        }
 
         return NextResponse.json({
           id: resultId,
@@ -59,10 +75,10 @@ export async function POST(request: NextRequest) {
         });
       } else {
         // Replicate未配置，使用模拟数据
-        console.log("Replicate API未配置，使用模拟生成");
+        console.warn("Replicate API未配置，使用模拟生成");
       }
     } catch (aiError) {
-      console.error("AI生成失败，使用模拟数据:", aiError);
+      console.error("AI生成失败，尝试降级到模拟数据:", aiError);
     }
 
     // 模拟处理时间 (3-5秒)
@@ -72,8 +88,23 @@ export async function POST(request: NextRequest) {
     // 返回模拟的生成结果
     const imageUrl = `https://picsum.photos/512/512?random=${resultId}`;
 
-    // TODO: 保存模拟结果到数据库（暂时跳过以通过构建）
-    console.log("保存模拟结果:", resultId);
+    // 保存模拟结果到数据库
+    const { error: mockDbError } = await supabaseAdmin
+      .from('results')
+      .insert({
+        id: resultId,
+        template_id: parseInt(templateId),
+        race_name: raceName,
+        finish_time: finishTime,
+        generated_image_url: imageUrl,
+        hd_image_url: imageUrl, // 模拟高清图
+        status: 'completed',
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+
+    if (mockDbError) {
+      console.error("保存模拟结果到数据库失败:", mockDbError);
+    }
 
     return NextResponse.json({
       id: resultId,

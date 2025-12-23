@@ -1,3 +1,5 @@
+import { supabaseAdmin } from './supabase';
+
 // 第三方发卡平台集成配置
 // 支持的平台：面包多、卡密网等
 
@@ -52,11 +54,8 @@ export async function handlePaymentCallback(
 ) {
   try {
     if (status === 'success' && code) {
-      // 支付成功，生成兑换码
-      const redeemCode = await generateRedeemCode();
-
-      // 保存兑换码到数据库
-      await saveRedeemCode(redeemCode, orderId);
+      // 支付成功，生成并保存兑换码
+      const redeemCode = await generateAndSaveRedeemCode(orderId);
 
       return {
         success: true,
@@ -78,7 +77,27 @@ export async function handlePaymentCallback(
   }
 }
 
-// 生成兑换码
+// 生成并保存兑换码
+async function generateAndSaveRedeemCode(orderId: string): Promise<string> {
+  const code = generateRedeemCode();
+  
+  const { error } = await supabaseAdmin
+    .from('codes')
+    .insert({
+      code,
+      status: 'active',
+      result_id: orderId, // 暂时用 orderId 作为标识
+    });
+
+  if (error) {
+    console.error("保存兑换码失败:", error);
+    throw error;
+  }
+
+  return code;
+}
+
+// 生成随机兑换码
 function generateRedeemCode(): string {
   // 生成8位随机兑换码
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -90,17 +109,21 @@ function generateRedeemCode(): string {
   return code;
 }
 
-// 保存兑换码到数据库（仅在API路由中使用）
-function saveRedeemCode(code: string, orderId: string) {
-  // 这个函数应该在API路由中调用，而不是在客户端
-  console.log("保存兑换码:", code, "订单:", orderId);
-}
-
 // 验证订单状态
-export function checkOrderStatus(orderId: string): boolean {
-  // 这个函数应该在API路由中实现，而不是在客户端
-  console.log("检查订单状态:", orderId);
-  return false;
+export async function checkOrderStatus(orderId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('codes')
+      .select('status')
+      .eq('result_id', orderId)
+      .single();
+
+    if (error || !data) return false;
+    return true;
+  } catch (error) {
+    console.error("检查订单状态失败:", error);
+    return false;
+  }
 }
 
 // 获取产品信息
